@@ -19,35 +19,27 @@ import java.util.Set;
 @Component
 public class UserDataRepository {
 
-    // Singleton Instance of UserDataRepository
-    private static UserDataRepository instance;
+    @Autowired
+    private DataSource dataSource;
 
-    private UserDataRepository () {
-    }
-
-    public static synchronized UserDataRepository getInstance() {
-        if (instance == null) {
-            instance = new UserDataRepository();
-        }
-        return instance;
-    }
+    // you can use it for execution of sql-statements without creating connections.
+    // just use jdbcTemplate.execute(...). Or another methods
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     //Authorized Users: map key - username; map value - token.
-    private static Map<String,String> authorizedUsers = new HashMap<>();
+    private Map<String,String> authorizedUsers = new HashMap<>();
 
-    public static Map<String, String> getAuthorizedUsers() {
+    public Map<String, String> getAuthorizedUsers() {
         return authorizedUsers;
     }
-    public static String getUserNameByToken (String token) {
+    public String getUserNameByToken (String token) {
         return getAuthorizedUsers().entrySet().stream()
                 .filter(e -> e.getValue().equals(token))
                 .map(Map.Entry::getKey)
                 .findFirst()
                 .get();
     }
-
-    @Autowired
-    private DataSource dataSource;
 
     public String login (String userName, String password) throws SQLException {
         //String queryGetUserByName = "SELECT username, password, FROM users WHERE username='"+userName+"';";
@@ -85,7 +77,7 @@ public class UserDataRepository {
         }
     }
 
-    public static String logout (String token) {
+    public String logout (String token) {
         if (getAuthorizedUsers().containsValue(token)) {
             for (Map.Entry<String, String> s : getAuthorizedUsers().entrySet()){
                 if (s.getValue().equals(token)) getAuthorizedUsers().remove(s.getKey());
@@ -95,7 +87,7 @@ public class UserDataRepository {
         return "User not authorized or token incorrect";
     }
 
-    public static String addNewUser(String userName, String password) throws SQLException {
+    public String addNewUser(String userName, String password) throws SQLException {
         BCryptPasswordEncoder encoder = new BCryptPasswordEncoder(16);
         String encodedPass = encoder.encode(password);
 
@@ -115,7 +107,7 @@ public class UserDataRepository {
         return "User " + userName + " registered. Now you have to log in.";
     }
 
-    public static Set<String> getAllRegisteredUsers() {
+    public Set<String> getAllRegisteredUsers() {
         Set<String> usersSet = new HashSet<>();
 
         try{
@@ -131,7 +123,7 @@ public class UserDataRepository {
         return usersSet;
     }
 
-    public static UserInfo getUserInfo (String username) {
+    public UserInfo getUserInfo (String username) {
         UserInfo userInfo = null;
 
         Statement statement;
@@ -152,7 +144,7 @@ public class UserDataRepository {
         return userInfo;
     }
 
-    public static void saveUsersResultsToDataBase(String username, int rightAnswersCounter, int questionsNumber) {
+    public void saveUsersResultsToDataBase(String username, int rightAnswersCounter, int questionsNumber) {
         Statement statement;
         try {
             statement = DatabaseConnection.getConnection().createStatement();
