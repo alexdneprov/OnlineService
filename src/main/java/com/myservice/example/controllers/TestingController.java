@@ -2,6 +2,7 @@ package com.myservice.example.controllers;
 
 import com.myservice.example.testing.*;
 import com.myservice.example.users.UserDataRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.sql.SQLException;
@@ -9,8 +10,10 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping
 public class TestingController {
+
+    @Autowired
+    private UserDataRepository userDataRepository;
 
     @GetMapping("/questions")   //Запуск теста, получение списка вопросов
     public Set<Question> getQuestions (@RequestParam(name = "token") String token) throws SQLException {
@@ -42,8 +45,8 @@ public class TestingController {
         }
         TestingSessionStorage.getUsersTest().remove(token);    //удаление перечня вопросов и ответов
 
-        String username = UserDataRepository.getUserNameByToken(token);
-        UserDataRepository.saveUsersResultsToDataBase(username,counter,testData.size());
+        String username = userDataRepository.getUserNameByToken(token);
+        userDataRepository.saveUsersResultsToDataBase(username,counter,testData.size());
 
         String result = (counter == testData.size()) ? "Testing successfully done.\n" : "Testing finished.\n";
         return String.format(result + "Right answers: %d of %d.", counter, testData.size());
