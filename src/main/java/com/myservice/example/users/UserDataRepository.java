@@ -1,16 +1,14 @@
 package com.myservice.example.users;
 
-import com.myservice.example.storage.DatabaseConnection;
+import com.myservice.example.exceptions.UserException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.rowset.SqlRowSet;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
 
-import javax.sql.DataSource;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -20,146 +18,108 @@ import java.util.Set;
 public class UserDataRepository {
 
     @Autowired
-    private DataSource dataSource;
-
-    // you can use it for execution of sql-statements without creating connections.
-    // just use jdbcTemplate.execute(...). Or another methods
-    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     //Authorized Users: map key - username; map value - token.
     private Map<String,String> authorizedUsers = new HashMap<>();
 
-    public Map<String, String> getAuthorizedUsers() {
-        return authorizedUsers;
+    public Set<String> getAuthorizedUsers() {
+        return authorizedUsers.keySet();
     }
+
     public String getUserNameByToken (String token) {
-        return getAuthorizedUsers().entrySet().stream()
+        return this.authorizedUsers.entrySet().stream()
                 .filter(e -> e.getValue().equals(token))
                 .map(Map.Entry::getKey)
                 .findFirst()
                 .get();
     }
 
-    public String login (String userName, String password) throws SQLException {
-        //String queryGetUserByName = "SELECT username, password, FROM users WHERE username='"+userName+"';";
-        String queryGetUserByName = "SELECT username FROM users WHERE username=?";
+    public boolean checkAuthorization(String token) {
+        if (authorizedUsers.containsValue(token)) return true;
+        throw new UserException(HttpStatus.UNAUTHORIZED, "User not authorized or token incorrect");
+    }
 
-        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
-        String s = jdbcTemplate.queryForObject(queryGetUserByName, new Object[]{userName},String.class);
-        SqlRowSet rowSet = jdbcTemplate.queryForRowSet(queryGetUserByName);
-        String u = rowSet.getString("username");
-        String p = rowSet.getString("password");
-
-        /*Statement statement = DatabaseConnection.getConnection().createStatement();
-        ResultSet result = statement.executeQuery(queryGetUserByName);
+    public String login (String userName, String password) throws SQLException, UserException {
+        BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+        String queryGetUserByName = "SELECT username, password FROM users WHERE username=?";
 
         String u = null;        String p = null;
-        while (result.next()) {
-            u = result.getString("username");
-            p = result.getString("password");
-        }*/
-
-        BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+        SqlRowSet rowSet = jdbcTemplate.queryForRowSet(queryGetUserByName,userName);
+        while (rowSet.next()) {
+            u = rowSet.getString("username");
+            p = rowSet.getString("password");
+        }
 
         if (u == null) {
-            return "User does not exists";
+            throw new UserException(HttpStatus.NOT_FOUND, "User does not exist");
         }else if (encoder.matches(password,p)) {
-            //statement.close();
-
-            if (authorizedUsers.containsKey(userName)) return "User already been authorized";
+            if (authorizedUsers.containsKey(userName)) throw new UserException(HttpStatus.BAD_REQUEST, "User has already authorized");
             String token = TokenGenerator.getToken();
             authorizedUsers.put(userName,token);
             return token;
         }else{
-            //statement.close();
-            return "Password incorrect";
+            throw new UserException(HttpStatus.NOT_ACCEPTABLE, "Password incorrect");
         }
     }
 
-    public String logout (String token) {
-        if (getAuthorizedUsers().containsValue(token)) {
-            for (Map.Entry<String, String> s : getAuthorizedUsers().entrySet()){
+    public HttpStatus logout (String token) {
+        if (checkAuthorization(token)) {
+            for (Map.Entry<String, String> s : this.authorizedUsers.entrySet()){
                 if (s.getValue().equals(token)) getAuthorizedUsers().remove(s.getKey());
             }
-            return "User logged out";
         }
-        return "User not authorized or token incorrect";
+        return HttpStatus.OK;
     }
 
-    public String addNewUser(String userName, String password) throws SQLException {
+    public HttpStatus addNewUser(String userName, String password) throws SQLException {
         BCryptPasswordEncoder encoder = new BCryptPasswordEncoder(16);
         String encodedPass = encoder.encode(password);
 
-        Statement statement = DatabaseConnection.getConnection().createStatement();
-        String checkUserQuery = "SELECT username FROM users WHERE username='"+userName+"';";
-        ResultSet result = statement.executeQuery(checkUserQuery);
+        String checkUserQuery = "SELECT COUNT(*) FROM users WHERE username=?";
 
-        if(result.next()){
-            String userNameFromDb = result.getString("username");
-            statement.close();
-            return "User" + userNameFromDb + "already exists.";
-        }
+        int exists = jdbcTemplate.queryForObject(checkUserQuery,new Object[]{userName},Integer.class);
+        if (exists > 0) throw new UserException(HttpStatus.NOT_ACCEPTABLE, "User " + userName + " already exists.");
 
-        String addUserQuery = "INSERT INTO users values ('"+userName+"','"+encodedPass+"', 0, 0)";
-        statement.executeUpdate(addUserQuery);
-        statement.close();
-        return "User " + userName + " registered. Now you have to log in.";
+        jdbcTemplate.update("INSERT INTO users values (?,?,?,?)",userName,encodedPass,0,0);
+        return HttpStatus.CREATED;
     }
 
     public Set<String> getAllRegisteredUsers() {
         Set<String> usersSet = new HashSet<>();
 
-        try{
-            Statement statement = DatabaseConnection.getConnection().createStatement();
-            String getAllUsers = "SELECT * FROM users";
-            ResultSet resultSet = statement.executeQuery(getAllUsers);
-            while(resultSet.next()) {
-                usersSet.add(resultSet.getString("username"));
-            }
-        }catch (SQLException e) {
-            e.printStackTrace();
+        String getAllUsers = "SELECT * FROM users";
+        SqlRowSet rowSet = jdbcTemplate.queryForRowSet(getAllUsers);
+
+        while (rowSet.next()) {
+            usersSet.add(rowSet.getString("username"));
         }
         return usersSet;
     }
 
-    public UserInfo getUserInfo (String username) {
-        UserInfo userInfo = null;
+    public UserInfo getUserInfo (String username) throws UserException {
+        String sql = "SELECT username,done_testing,done_right_testing FROM users WHERE username = ?";
+        SqlRowSet rows = jdbcTemplate.queryForRowSet(sql,username);
 
-        Statement statement;
-        try {
-            statement = DatabaseConnection.getConnection().createStatement();
-            String checkUserQuery = "SELECT username,done_testing,done_right_testing FROM users WHERE username ='"+username+"';";
-            ResultSet result = statement.executeQuery(checkUserQuery);
-            result.next();
-
-            String userName = result.getString("username");
-            String done_testing = String.valueOf(result.getInt("done_testing"));
-            String done_testing_right = String.valueOf(result.getInt("done_right_testing"));
-
-            userInfo = new UserInfo(userName,Boolean.parseBoolean(done_testing),Boolean.parseBoolean(done_testing_right));
-        } catch (SQLException e) {
-            e.printStackTrace();
+        String name = null; boolean done_testing = false; boolean done_right_testing = false;
+        while (rows.next()) {
+            name = rows.getString("username");
+            done_testing = rows.getInt("done_testing") == 1;
+            done_right_testing = rows.getInt("done_right_testing") == 1;
         }
-        return userInfo;
+
+        if (name == null) throw new UserException(HttpStatus.NOT_FOUND, "User does not exists");
+        return new UserInfo(name,done_testing,done_right_testing);
     }
 
-    public void saveUsersResultsToDataBase(String username, int rightAnswersCounter, int questionsNumber) {
-        Statement statement;
-        try {
-            statement = DatabaseConnection.getConnection().createStatement();
-
-            if (rightAnswersCounter == questionsNumber) {
-                String doneRightQuery = "UPDATE `onlineservice`.`users` SET `done_testing` = '1', `done_right_testing` = '1' WHERE (`username` = '" + username + "');";
-                statement.executeUpdate(doneRightQuery);
-                statement.close();
-            }else {
-                String doneQuery = "UPDATE `onlineservice`.`users` SET `done_testing` = '1', `done_right_testing` = '0' WHERE (`username` = '" + username + "');";
-                statement.executeUpdate(doneQuery);
-                statement.close();
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
+    public HttpStatus saveUsersResultsToDataBase(String username, int rightAnswersCounter, int questionsNumber) {
+        if (rightAnswersCounter == questionsNumber) {
+            String sqlRight = "UPDATE onlineservice.users SET done_testing = ?, done_right_testing = ? WHERE (username = ?)";
+            jdbcTemplate.update(sqlRight,1,1,username);
+        }else {
+            String sqlDone = "UPDATE onlineservice.users SET done_testing = ?, done_right_testing = ? WHERE (username = ?)";
+            jdbcTemplate.update(sqlDone,1,0,username);
         }
+        return HttpStatus.ACCEPTED;
     }
 }
